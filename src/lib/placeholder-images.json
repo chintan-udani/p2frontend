@@ -1,0 +1,16 @@
+{
+  "placeholderImages": [
+    {
+      "url": "https://picsum.photos/seed/1/600/400",
+      "hint": "crypto currency"
+    },
+    {
+      "url": "https://picsum.photos/seed/2/600/400",
+      "hint": "stock market"
+    },
+    {
+      "url": "https://picsum.photos/seed/3/600/400",
+      "hint": "blockchain"
+    }
+  ]
+}
