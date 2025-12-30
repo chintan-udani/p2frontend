@@ -1,7 +1,7 @@
 
 "use client";
 
-import { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
 import type { AppUser, Channel, Message, Transaction } from './types';
 import { CHANNELS, MESSAGES, TRANSACTIONS, MOCK_USERS } from './mock-data';
 import { useToast } from "@/hooks/use-toast";
@@ -70,7 +70,8 @@ export const useAppProvider = () => {
   const [unlockedMessages, setUnlockedMessages] = useState<Set<string>>(new Set());
   const [typingUsers, setTypingUsers] = useState<{ [channelId: string]: string[] }>({});
   const [connectedChannelId, setConnectedChannelId] = useState<string | null>(null);
-  const [ws, setWs] = useState<WebSocket | null>(null);
+  const wsRef = useRef<WebSocket | null>(null);
+  const connectedChannelIdRef = useRef<string | null>(null);
 
   const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:4000';
   let wsBase = API_BASE_URL.replace('0.0.0.0', 'localhost');
@@ -78,7 +79,7 @@ export const useAppProvider = () => {
   const WS_BASE_URL = wsBase.replace(/^http(s?):\/\//, (_, s) => `ws${s ? 's' : ''}://`);
 
 
-  function toAppMessage(apiMsg: { id?: string; _id?: string; channel: string; sender: { id?: string; _id?: string; username?: string; role?: string }; content: string | null; createdAt: string | number | Date; isLocked?: boolean; lockPrice?: number; imageData?: string | null; unlockedByUsers?: Array<{ id: string; username?: string; email?: string }>; notUnlockedUsers?: Array<{ id: string; username?: string; email?: string }> }): Message {
+  function toAppMessage(apiMsg: { id?: string; _id?: string; channel: string; sender: { id?: string; _id?: string; username?: string; role?: string }; content: string | null; createdAt: string | number | Date; isLocked?: boolean; lockPrice?: number; imageData?: string | null; unlockedByIds?: string[]; unlockedByUsers?: Array<{ id: string; username?: string; email?: string }>; notUnlockedUsers?: Array<{ id: string; username?: string; email?: string }> }): Message {
     return {
       id: apiMsg.id || (apiMsg as any)._id || String(Date.now()),
       channelId: String(apiMsg.channel),
@@ -96,7 +97,7 @@ export const useAppProvider = () => {
             : Number(apiMsg.createdAt),
       isLocked: !!apiMsg.isLocked,
       price: Number(apiMsg.lockPrice || 0),
-      unlockedBy: [],
+      unlockedBy: Array.isArray(apiMsg.unlockedByIds) ? apiMsg.unlockedByIds : [],
       unlockedByUsers: apiMsg.unlockedByUsers,
       notUnlockedUsers: apiMsg.notUnlockedUsers,
     };
@@ -229,7 +230,7 @@ export const useAppProvider = () => {
       try {
         const wb = await apiGet<{ balance: number; transactions?: any[] }>(`/wallet/balance`);
         setWalletBalance(Number(wb.balance) || 0);
-      } catch {}
+      } catch { }
       toast({ title: "Message unlocked!", description: `You can now view the message.` });
       return true;
     } catch (e: any) {
@@ -283,57 +284,81 @@ export const useAppProvider = () => {
     })();
   }, [user]);
 
+  // Cleanup WebSocket on unmount
+  useEffect(() => {
+    return () => {
+      if (wsRef.current) {
+        try { wsRef.current.close(); } catch { }
+      }
+    };
+  }, []);
+
   // --- Real-time Simulation ---
 
-const connectToChannel = useCallback((channelId: string) => {
-  if (connectedChannelId === channelId && ws?.readyState === WebSocket.OPEN) return;
-  setConnectedChannelId(channelId);
-  if (ws) {
-    try { ws.close(); } catch {}
-  }
-  (async () => {
-    try {
-      const data = await apiGet<{ messages: Array<any> }>(`/messages/${channelId}`);
-      const mapped = data.messages.map(toAppMessage);
-      setMessages(prev => [...prev.filter(m => m.channelId !== channelId), ...mapped].sort((a, b) => a.timestamp - b.timestamp));
-    } catch {}
-  })();
-  const url = `${WS_BASE_URL}/ws?channelId=${encodeURIComponent(channelId)}`;
-  const sock = new WebSocket(url);
-  sock.onmessage = (ev) => {
-    try {
-      const data = JSON.parse(ev.data);
-      if (data.event === 'message:new' && data.payload) {
-        const p = data.payload;
-        const m = toAppMessage({
-          id: p.id || p._id,
-          channel: p.channel || p.channelId || channelId,
-          sender: p.sender || p.author,
-          content: p.content,
-          createdAt: p.createdAt || p.timestamp,
-          isLocked: p.isLocked,
-          lockPrice: p.lockPrice,
-          imageData: p.imageData || null,
-        });
-        setMessages(prev => {
-          if (prev.some(x => x.id === m.id)) return prev;
-          return [...prev, m];
-        });
-      } else if (data.event === 'message:unlock' && data.payload) {
-        const { messageId, userId } = data.payload;
-        setMessages(prev => prev.map(x => x.id === messageId ? { ...x, unlockedBy: x.unlockedBy.includes(userId) ? x.unlockedBy : [...x.unlockedBy, userId] } : x));
-        if (userId === user?.uid) {
+  const connectToChannel = useCallback((channelId: string) => {
+    if (connectedChannelIdRef.current === channelId && wsRef.current?.readyState === WebSocket.OPEN) return;
+    connectedChannelIdRef.current = channelId;
+    setConnectedChannelId(channelId);
+    if (wsRef.current) {
+      try { wsRef.current.close(); } catch { }
+    }
+    (async () => {
+      try {
+        const data = await apiGet<{ messages: Array<any> }>(`/messages/${channelId}`);
+        const mapped = data.messages.map(toAppMessage);
+
+        // Populate unlockedMessages Set with messages the current user has unlocked
+        if (user?.uid) {
           setUnlockedMessages(prev => {
             const next = new Set(prev);
-            next.add(messageId);
+            mapped.forEach(msg => {
+              if (msg.unlockedBy && msg.unlockedBy.includes(user.uid)) {
+                next.add(msg.id);
+              }
+            });
             return next;
           });
         }
-      }
-    } catch {}
-  };
-  setWs(sock);
-}, [WS_BASE_URL, ws, connectedChannelId]);
+
+        setMessages(prev => [...prev.filter(m => m.channelId !== channelId), ...mapped].sort((a, b) => a.timestamp - b.timestamp));
+      } catch { }
+    })();
+    const url = `${WS_BASE_URL}/ws?channelId=${encodeURIComponent(channelId)}`;
+    const sock = new WebSocket(url);
+    sock.onmessage = (ev) => {
+      try {
+        const data = JSON.parse(ev.data);
+        if (data.event === 'message:new' && data.payload) {
+          const p = data.payload;
+          const m = toAppMessage({
+            id: p.id || p._id,
+            channel: p.channel || p.channelId || channelId,
+            sender: p.sender || p.author,
+            content: p.content,
+            createdAt: p.createdAt || p.timestamp,
+            isLocked: p.isLocked,
+            lockPrice: p.lockPrice,
+            imageData: p.imageData || null,
+          });
+          setMessages(prev => {
+            if (prev.some(x => x.id === m.id)) return prev;
+            return [...prev, m];
+          });
+        } else if (data.event === 'message:unlock' && data.payload) {
+          const { messageId, userId } = data.payload;
+          setMessages(prev => prev.map(x => x.id === messageId ? { ...x, unlockedBy: x.unlockedBy.includes(userId) ? x.unlockedBy : [...x.unlockedBy, userId] } : x));
+          if (userId === user?.uid) {
+            setUnlockedMessages(prev => {
+              const next = new Set(prev);
+              next.add(messageId);
+              return next;
+            });
+          }
+        }
+      } catch { }
+    };
+    wsRef.current = sock;
+  }, [WS_BASE_URL, user]);
   return {
     user,
     loading,

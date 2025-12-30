@@ -1,11 +1,11 @@
 "use client";
 
-import { useMemo } from 'react';
+import { useMemo, useEffect } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { useChat } from '@/lib/hooks';
 import { MessageList } from '@/app/components/chat/message-list';
 import { MessageInput } from '@/app/components/chat/message-input';
- 
+
 
 export default function ChatPage() {
   const searchParams = useSearchParams();
@@ -19,18 +19,25 @@ export default function ChatPage() {
     return channels.length ? channels[0].id : null;
   }, [paramChannelId, channels]);
 
-  
+  // Automatically connect to the channel when currentChannelId changes
+  useEffect(() => {
+    if (currentChannelId) {
+      connectToChannel(currentChannelId);
+    }
+  }, [currentChannelId, connectToChannel]);
+
+
 
   const currentChannel = useMemo(
     () => channels.find(c => c.id === currentChannelId) || channels[0],
     [channels, currentChannelId]
   );
-  
+
   const filteredMessages = useMemo(
     () => messages.filter(msg => msg.channelId === currentChannelId),
     [messages, currentChannelId]
   );
-  
+
   const currentTypingUsers = currentChannelId ? (typingUsers[currentChannelId] || []) : [];
 
   return (
