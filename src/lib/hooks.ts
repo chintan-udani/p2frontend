@@ -72,6 +72,7 @@ export const useAppProvider = () => {
   const [connectedChannelId, setConnectedChannelId] = useState<string | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const connectedChannelIdRef = useRef<string | null>(null);
+  const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
   const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:4000';
   let wsBase = API_BASE_URL.replace('0.0.0.0', 'localhost');
@@ -284,11 +285,14 @@ export const useAppProvider = () => {
     })();
   }, [user]);
 
-  // Cleanup WebSocket on unmount
+  // Cleanup WebSocket and polling on unmount
   useEffect(() => {
     return () => {
       if (wsRef.current) {
         try { wsRef.current.close(); } catch { }
+      }
+      if (pollingIntervalRef.current) {
+        clearInterval(pollingIntervalRef.current);
       }
     };
   }, []);
@@ -299,9 +303,19 @@ export const useAppProvider = () => {
     if (connectedChannelIdRef.current === channelId && wsRef.current?.readyState === WebSocket.OPEN) return;
     connectedChannelIdRef.current = channelId;
     setConnectedChannelId(channelId);
+
+    // Clean up existing connections
     if (wsRef.current) {
       try { wsRef.current.close(); } catch { }
     }
+    if (pollingIntervalRef.current) {
+      clearInterval(pollingIntervalRef.current);
+      pollingIntervalRef.current = null;
+    }
+
+    let wsConnectionFailed = false;
+
+    // Load initial messages
     (async () => {
       try {
         const data = await apiGet<{ messages: Array<any> }>(`/messages/${channelId}`);
@@ -321,43 +335,132 @@ export const useAppProvider = () => {
         }
 
         setMessages(prev => [...prev.filter(m => m.channelId !== channelId), ...mapped].sort((a, b) => a.timestamp - b.timestamp));
-      } catch { }
+      } catch (err) {
+        console.error('Failed to load initial messages:', err);
+      }
     })();
-    const url = `${WS_BASE_URL}/ws?channelId=${encodeURIComponent(channelId)}`;
-    const sock = new WebSocket(url);
-    sock.onmessage = (ev) => {
-      try {
-        const data = JSON.parse(ev.data);
-        if (data.event === 'message:new' && data.payload) {
-          const p = data.payload;
-          const m = toAppMessage({
-            id: p.id || p._id,
-            channel: p.channel || p.channelId || channelId,
-            sender: p.sender || p.author,
-            content: p.content,
-            createdAt: p.createdAt || p.timestamp,
-            isLocked: p.isLocked,
-            lockPrice: p.lockPrice,
-            imageData: p.imageData || null,
-          });
-          setMessages(prev => {
-            if (prev.some(x => x.id === m.id)) return prev;
-            return [...prev, m];
-          });
-        } else if (data.event === 'message:unlock' && data.payload) {
-          const { messageId, userId } = data.payload;
-          setMessages(prev => prev.map(x => x.id === messageId ? { ...x, unlockedBy: x.unlockedBy.includes(userId) ? x.unlockedBy : [...x.unlockedBy, userId] } : x));
-          if (userId === user?.uid) {
+
+    // Start polling fallback (will be cleared if WebSocket connects successfully)
+    const startPolling = () => {
+      if (pollingIntervalRef.current) return;
+      console.log('Starting polling fallback for channel:', channelId);
+      pollingIntervalRef.current = setInterval(async () => {
+        try {
+          const data = await apiGet<{ messages: Array<any> }>(`/messages/${channelId}`);
+          const mapped = data.messages.map(toAppMessage);
+
+          // Update unlocked messages
+          if (user?.uid) {
             setUnlockedMessages(prev => {
               const next = new Set(prev);
-              next.add(messageId);
+              mapped.forEach(msg => {
+                if (msg.unlockedBy && msg.unlockedBy.includes(user.uid)) {
+                  next.add(msg.id);
+                }
+              });
               return next;
             });
           }
+
+          setMessages(prev => {
+            const filtered = prev.filter(m => m.channelId !== channelId);
+            return [...filtered, ...mapped].sort((a, b) => a.timestamp - b.timestamp);
+          });
+        } catch (err) {
+          console.error('Polling failed:', err);
         }
-      } catch { }
+      }, 2000); // Poll every 2 seconds
     };
-    wsRef.current = sock;
+
+    // Try WebSocket connection
+    const url = `${WS_BASE_URL}/ws?channelId=${encodeURIComponent(channelId)}`;
+    console.log('Attempting WebSocket connection to:', url);
+
+    try {
+      const sock = new WebSocket(url);
+
+      sock.onopen = () => {
+        console.log('WebSocket connected successfully to channel:', channelId);
+        wsConnectionFailed = false;
+        // Clear polling if it was started
+        if (pollingIntervalRef.current) {
+          clearInterval(pollingIntervalRef.current);
+          pollingIntervalRef.current = null;
+        }
+      };
+
+      sock.onmessage = (ev) => {
+        try {
+          const data = JSON.parse(ev.data);
+          console.log('WebSocket message received:', data);
+
+          if (data.event === 'message:new' && data.payload) {
+            const p = data.payload;
+            const m = toAppMessage({
+              id: p.id || p._id,
+              channel: p.channel || p.channelId || channelId,
+              sender: p.sender || p.author,
+              content: p.content,
+              createdAt: p.createdAt || p.timestamp,
+              isLocked: p.isLocked,
+              lockPrice: p.lockPrice,
+              imageData: p.imageData || null,
+            });
+            setMessages(prev => {
+              if (prev.some(x => x.id === m.id)) return prev;
+              return [...prev, m];
+            });
+          } else if (data.event === 'message:unlock' && data.payload) {
+            const { messageId, userId } = data.payload;
+            setMessages(prev => prev.map(x => x.id === messageId ? { ...x, unlockedBy: x.unlockedBy.includes(userId) ? x.unlockedBy : [...x.unlockedBy, userId] } : x));
+            if (userId === user?.uid) {
+              setUnlockedMessages(prev => {
+                const next = new Set(prev);
+                next.add(messageId);
+                return next;
+              });
+            }
+          }
+        } catch (err) {
+          console.error('Error parsing WebSocket message:', err);
+        }
+      };
+
+      sock.onerror = (err) => {
+        console.error('WebSocket error:', err);
+        wsConnectionFailed = true;
+        if (!pollingIntervalRef.current) {
+          startPolling();
+        }
+      };
+
+      sock.onclose = (event) => {
+        console.log('WebSocket closed:', event.code, event.reason);
+        if (!wsConnectionFailed && !pollingIntervalRef.current) {
+          startPolling();
+        }
+      };
+
+      // Fallback: if connection doesn't open within 5 seconds, start polling
+      setTimeout(() => {
+        if (sock.readyState !== WebSocket.OPEN) {
+          console.warn('WebSocket connection timed out, starting polling fallback');
+          startPolling();
+        }
+      }, 5000);
+
+      wsRef.current = sock;
+
+      // Cleanup function
+      return () => {
+        if (pollingIntervalRef.current) {
+          clearInterval(pollingIntervalRef.current);
+        }
+      };
+    } catch (err) {
+      console.error('Failed to create WebSocket:', err);
+      startPolling();
+    }
   }, [WS_BASE_URL, user]);
   return {
     user,
