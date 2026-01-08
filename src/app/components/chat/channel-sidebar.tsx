@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useSearchParams, useRouter } from 'next/navigation';
-import { useAuth, useChat } from '@/lib/hooks';
+import { useAuth } from '@/lib/hooks';
 import { apiGet, apiPost } from '@/lib/api/client';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
@@ -15,7 +15,6 @@ import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 export function ChannelSidebar() {
   const [channels, setChannels] = useState<Array<{ id: string; name: string }>>([]);
   const { user, logout } = useAuth();
-  const { connectToChannel } = useChat();
   const searchParams = useSearchParams();
   const router = useRouter();
   const currentChannelId = searchParams.get('channel') || 'general';
@@ -58,7 +57,7 @@ export function ChannelSidebar() {
             className="w-full justify-start"
             asChild
           >
-            <Link href={`/chat?channel=${channel.id}`} onClick={() => connectToChannel(channel.id)}>
+            <Link href={`/chat?channel=${channel.id}`}>
               <Hash className="mr-2 h-4 w-4" />
               {channel.name}
             </Link>
@@ -67,14 +66,14 @@ export function ChannelSidebar() {
       </nav>
       <div className="mt-auto border-t p-2">
         <div className="flex items-center justify-between rounded-lg p-2 hover:bg-muted/50">
-           <div className="flex items-center gap-2">
-             <Avatar className="h-8 w-8">
-                <AvatarFallback>
-                    <UserIcon className="h-4 w-4" />
-                </AvatarFallback>
-             </Avatar>
-             <span className="text-sm font-medium">{user?.username || user?.email}</span>
-           </div>
+          <div className="flex items-center gap-2">
+            <Avatar className="h-8 w-8">
+              <AvatarFallback>
+                <UserIcon className="h-4 w-4" />
+              </AvatarFallback>
+            </Avatar>
+            <span className="text-sm font-medium">{user?.username || user?.email}</span>
+          </div>
           <Button variant="ghost" size="icon" onClick={handleLogout} className="h-8 w-8">
             <LogOut className="h-4 w-4" />
           </Button>

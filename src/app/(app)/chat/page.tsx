@@ -24,7 +24,8 @@ export default function ChatPage() {
     if (currentChannelId) {
       connectToChannel(currentChannelId);
     }
-  }, [currentChannelId, connectToChannel]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentChannelId]);
 
 
 
