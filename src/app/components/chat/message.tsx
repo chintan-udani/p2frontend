@@ -36,14 +36,14 @@ export function Message({ message }: MessageProps) {
   const [statsNotUnlocked, setStatsNotUnlocked] = useState<Array<{ id: string; username?: string; email?: string }>>([]);
 
   const isAuthor = user?.uid === message.author.uid;
-  const isUnlocked = !message.isLocked || isAuthor || isMessageUnlocked(message.id) || Boolean(message.content);
+  const isUnlocked = !message.isLocked || isAuthor || isMessageUnlocked(message.id);
 
   const handleUnlockClick = () => {
     if (!isUnlocked) {
       setIsModalOpen(true);
     }
   };
-  
+
   const hasContent = message.content && message.content.trim().length > 0;
 
   return (
@@ -60,7 +60,7 @@ export function Message({ message }: MessageProps) {
           {!isAuthor && <span className="font-semibold text-foreground">{message.author.name}</span>}
           <span>{formatDistanceToNow(new Date(message.timestamp), { addSuffix: true })}</span>
         </div>
-        
+
         <div
           className={cn(
             'relative rounded-lg text-sm',
@@ -100,39 +100,39 @@ export function Message({ message }: MessageProps) {
           )}
         </div>
         {message.isLocked && user?.role === 'admin' && (
-            <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                {isAuthor && (
-                    <div className="flex items-center gap-1">
-                        <DollarSign className="h-3 w-3" />
-                        <span>Locked for ${message.price}</span>
-                    </div>
-                )}
-                <button
-                  className="flex items-center gap-1 hover:underline"
-                  onClick={async () => {
-                    setIsStatsOpen(true);
-                    try {
-                      const data = await apiGet<{ messages: Array<any> }>(`/messages/${message.channelId}`);
-                      const found = data.messages.find((m) => (m.id || m._id) === message.id);
-                      if (found) {
-                        const u = found.unlockedByUsers || [];
-                        const n = found.notUnlockedUsers || [];
-                        setStatsUnlocked(u.map((x: any) => ({ id: String(x.id || x._id || x), username: x.username, email: x.email })));
-                        setStatsNotUnlocked(n.map((x: any) => ({ id: String(x.id || x._id || x), username: x.username, email: x.email })));
-                      } else {
-                        setStatsUnlocked(message.unlockedBy.map((uid) => ({ id: uid })));
-                        setStatsNotUnlocked([]);
-                      }
-                    } catch {
-                      setStatsUnlocked(message.unlockedBy.map((uid) => ({ id: uid })));
-                      setStatsNotUnlocked([]);
-                    }
-                  }}
-                >
-                  <Users className="h-3 w-3" />
-                  <span>Unlocked by {message.unlockedBy.length} users</span>
-                </button>
-            </div>
+          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+            {isAuthor && (
+              <div className="flex items-center gap-1">
+                <DollarSign className="h-3 w-3" />
+                <span>Locked for ${message.price}</span>
+              </div>
+            )}
+            <button
+              className="flex items-center gap-1 hover:underline"
+              onClick={async () => {
+                setIsStatsOpen(true);
+                try {
+                  const data = await apiGet<{ messages: Array<any> }>(`/messages/${message.channelId}`);
+                  const found = data.messages.find((m) => (m.id || m._id) === message.id);
+                  if (found) {
+                    const u = found.unlockedByUsers || [];
+                    const n = found.notUnlockedUsers || [];
+                    setStatsUnlocked(u.map((x: any) => ({ id: String(x.id || x._id || x), username: x.username, email: x.email })));
+                    setStatsNotUnlocked(n.map((x: any) => ({ id: String(x.id || x._id || x), username: x.username, email: x.email })));
+                  } else {
+                    setStatsUnlocked(message.unlockedBy.map((uid) => ({ id: uid })));
+                    setStatsNotUnlocked([]);
+                  }
+                } catch {
+                  setStatsUnlocked(message.unlockedBy.map((uid) => ({ id: uid })));
+                  setStatsNotUnlocked([]);
+                }
+              }}
+            >
+              <Users className="h-3 w-3" />
+              <span>Unlocked by {message.unlockedBy.length} users</span>
+            </button>
+          </div>
         )}
       </div>
       {isAuthor && (
@@ -172,7 +172,7 @@ export function Message({ message }: MessageProps) {
                       message.unlockedByUsers.map((u) => (
                         <li key={u.id}>{u.username || u.email || u.id}</li>
                       ))
-                    ) :  (
+                    ) : (
                       <li className="italic text-muted-foreground">Details not available</li>
                     )}
                   </ul>

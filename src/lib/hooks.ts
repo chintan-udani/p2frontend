@@ -300,22 +300,28 @@ export const useAppProvider = () => {
   // --- Real-time Simulation ---
 
   const connectToChannel = useCallback((channelId: string) => {
-    if (connectedChannelIdRef.current === channelId && wsRef.current?.readyState === WebSocket.OPEN) return;
+    // Check if we're already connected to prevent duplicate connections
+    // BUT still allow message loading to happen
+    const isAlreadyConnected = connectedChannelIdRef.current === channelId && wsRef.current?.readyState === WebSocket.OPEN;
+
+    // Always update the connected channel reference
     connectedChannelIdRef.current = channelId;
     setConnectedChannelId(channelId);
 
-    // Clean up existing connections
-    if (wsRef.current) {
-      try { wsRef.current.close(); } catch { }
-    }
-    if (pollingIntervalRef.current) {
-      clearInterval(pollingIntervalRef.current);
-      pollingIntervalRef.current = null;
+    // Clean up existing connections only if switching channels
+    if (!isAlreadyConnected) {
+      if (wsRef.current) {
+        try { wsRef.current.close(); } catch { }
+      }
+      if (pollingIntervalRef.current) {
+        clearInterval(pollingIntervalRef.current);
+        pollingIntervalRef.current = null;
+      }
     }
 
     let wsConnectionFailed = false;
 
-    // Load initial messages
+    // ALWAYS Load initial messages (even if already connected, to ensure fresh data)
     (async () => {
       try {
         const data = await apiGet<{ messages: Array<any> }>(`/messages/${channelId}`);
@@ -339,6 +345,11 @@ export const useAppProvider = () => {
         console.error('Failed to load initial messages:', err);
       }
     })();
+
+    // If already connected with an open WebSocket, don't recreate the connection
+    if (isAlreadyConnected) {
+      return;
+    }
 
     // Start polling fallback (will be cleared if WebSocket connects successfully)
     const startPolling = () => {
